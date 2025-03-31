@@ -15,11 +15,16 @@ interface Resource {
   file_name: string
   created_at: string
   category: 'notes' | 'pyqs' | 'projects'
+  subject?: {
+    name: string
+    subject_type: string
+  }
 }
 
 interface Subject {
   id: string
   name: string
+  subject_type: string
   grade: number
 }
 
@@ -29,61 +34,48 @@ export default function SubjectPage() {
   const params = useParams()
   const grade = parseInt(params.grade as string)
   const subjectId = params.subjectId as string
-  const [resources, setResources] = useState<Resource[]>([])
-  const [filteredResources, setFilteredResources] = useState<Resource[]>([])
   const [subject, setSubject] = useState<Subject | null>(null)
+  const [resources, setResources] = useState<Resource[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedCategory, setSelectedCategory] = useState<Category>('notes')
   const [previewResource, setPreviewResource] = useState<Resource | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const supabase = createClientComponentClient()
 
   useEffect(() => {
-    if (grade >= 9 && grade <= 12) {
-      fetchSubject()
-      fetchResources()
-    } else {
-      setError('Invalid grade')
-      setLoading(false)
+    async function fetchData() {
+      setLoading(true)
+      setError(null)
+      try {
+        // Fetch subject details
+        const { data: subjectData, error: subjectError } = await supabase
+          .from('subjects')
+          .select('*')
+          .eq('id', subjectId)
+          .single()
+
+        if (subjectError) throw subjectError
+        setSubject(subjectData)
+
+        // Fetch resources
+        const { data: resourcesData, error: resourcesError } = await supabase
+          .from('resources')
+          .select('*')
+          .eq('subject_id', subjectId)
+
+        if (resourcesError) throw resourcesError
+        setResources(resourcesData || [])
+      } catch (error) {
+        console.error('Error:', error)
+        setError(error instanceof Error ? error.message : 'Failed to fetch resources')
+      } finally {
+        setLoading(false)
+      }
     }
-  }, [grade, subjectId])
 
-  useEffect(() => {
-    setFilteredResources(resources.filter(r => r.category === selectedCategory))
-  }, [selectedCategory, resources])
-
-  const fetchSubject = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('subjects')
-        .select('*')
-        .eq('id', subjectId)
-        .single()
-
-      if (error) throw error
-      setSubject(data)
-    } catch (error) {
-      console.error('Error fetching subject:', error)
-    }
-  }
-
-  const fetchResources = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('resources')
-        .select('*')
-        .eq('subject_id', subjectId)
-        .eq('grade', grade)
-        .order('created_at', { ascending: false })
-
-      if (error) throw error
-      setResources(data || [])
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to fetch resources')
-    } finally {
-      setLoading(false)
-    }
-  }
+    fetchData()
+  }, [grade, subjectId, supabase])
 
   const getGradeColor = (grade: number) => {
     const colors = {
@@ -122,133 +114,297 @@ export default function SubjectPage() {
     }
   }
 
+  const handleDownload = async (resource: Resource) => {
+    try {
+      // Get the file from Supabase Storage
+      const { data, error } = await supabase
+        .storage
+        .from('resources')
+        .download(resource.file_url.split('/').pop()!)
+
+      if (error) {
+        throw error
+      }
+
+      // Create a blob from the data
+      const blob = new Blob([data], { type: 'application/octet-stream' })
+      
+      // Create a temporary URL for the blob
+      const url = window.URL.createObjectURL(blob)
+      
+      // Create a temporary link element
+      const link = document.createElement('a')
+      link.href = url
+      link.download = resource.file_name // Set the download filename
+      document.body.appendChild(link)
+      
+      // Trigger the download
+      link.click()
+      
+      // Clean up
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Error downloading file:', error)
+      alert('Failed to download file. Please try again.')
+    }
+  }
+
+  // Filter resources based on category and search query
+  const getFilteredResources = () => {
+    return resources.filter(resource => {
+      const matchesCategory = resource.category === selectedCategory;
+      const matchesSearch = searchQuery.trim() === '' || 
+        resource.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        resource.description?.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesCategory && matchesSearch;
+    });
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
-        </div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
       </div>
-    )
+    );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-red-600 mb-4">Error: {error}</div>
-          <button
-            onClick={fetchResources}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
-          >
-            Try Again
-          </button>
-        </div>
+      <div className="min-h-screen flex flex-col items-center justify-center">
+        <div className="text-red-600 mb-4">Error: {error}</div>
+        <button
+          onClick={() => {
+            setLoading(true)
+            setError(null)
+            const fetchData = async () => {
+              try {
+                const { data: subjectData, error: subjectError } = await supabase
+                  .from('subjects')
+                  .select('*')
+                  .eq('id', subjectId)
+                  .single()
+
+                if (subjectError) throw subjectError
+                setSubject(subjectData)
+
+                const { data: resourcesData, error: resourcesError } = await supabase
+                  .from('resources')
+                  .select('*')
+                  .eq('subject_id', subjectId)
+
+                if (resourcesError) throw resourcesError
+                setResources(resourcesData || [])
+                setLoading(false)
+              } catch (error) {
+                console.error('Error:', error)
+                setError(error instanceof Error ? error.message : 'Failed to fetch resources')
+                setLoading(false)
+              }
+            }
+            fetchData()
+          }}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+        >
+          Retry
+        </button>
       </div>
     )
   }
 
+  const filteredResources = getFilteredResources();
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-white">
       {/* Header */}
-      <div className="bg-white shadow">
-        <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between">
+      <div className="bg-white border-b">
+        <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col space-y-4">
             <Link
               href={`/grade/${grade}`}
-              className="text-indigo-600 hover:text-indigo-900"
+              className="flex items-center text-gray-600 hover:text-gray-900 w-fit"
             >
-              ← Back to Grade {grade}
+              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              Back to Subjects
             </Link>
-            <h1 className={`text-3xl font-bold ${getGradeColor(grade)}`}>
-              {subject?.name || 'Subject'} Resources
-            </h1>
+            <div>
+              <h1 className="text-4xl font-bold text-gray-900">{subject?.name || 'Subject'}</h1>
+              <p className="mt-2 text-gray-600">Grade {grade} • {subject?.subject_type || 'Science'}</p>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Category Tabs */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex space-x-8">
-            {(['notes', 'pyqs', 'projects'] as Category[]).map((category) => (
+      {/* Search and Filter Section */}
+      <div className="border-b bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex flex-col space-y-4">
+            {/* Search Bar */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search resources..."
+                className="w-full px-4 py-3 pl-10 pr-4 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <svg
+                className="absolute left-3 top-3.5 h-5 w-5 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                />
+              </svg>
+            </div>
+
+            {/* Filter Buttons */}
+            <div className="flex gap-3">
               <button
-                key={category}
-                onClick={() => setSelectedCategory(category)}
-                className={`py-4 px-1 border-b-2 font-medium text-sm capitalize ${
-                  selectedCategory === category
-                    ? `${getCategoryColor(category)} border-current`
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                onClick={() => setSelectedCategory('notes')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  selectedCategory === 'notes'
+                    ? 'bg-gray-900 text-white'
+                    : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
                 }`}
               >
-                {category === 'pyqs' ? 'PYQs' : category}
+                Study Notes
               </button>
-            ))}
+              <button
+                onClick={() => setSelectedCategory('pyqs')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  selectedCategory === 'pyqs'
+                    ? 'bg-gray-900 text-white'
+                    : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+                }`}
+              >
+                Previous Year Questions
+              </button>
+              <button
+                onClick={() => setSelectedCategory('projects')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  selectedCategory === 'projects'
+                    ? 'bg-gray-900 text-white'
+                    : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+                }`}
+              >
+                Project Resources
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Resources List */}
-      <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
-        {filteredResources.length === 0 ? (
-          <div className="text-center py-12">
-            <h3 className="text-lg font-medium text-gray-900">No {selectedCategory} available</h3>
-            <p className="mt-2 text-gray-500">
-              There are currently no {selectedCategory} available for this subject.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {filteredResources.map((resource) => (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredResources.length > 0 ? (
+            filteredResources.map((resource) => (
               <div
                 key={resource.id}
-                className="bg-white shadow-sm rounded-lg overflow-hidden"
+                className="bg-white border rounded-lg overflow-hidden hover:shadow-md transition-shadow duration-200"
               >
                 <div className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <h3 className="text-lg font-medium text-gray-900">
+                  <div className="flex flex-col space-y-4">
+                    {/* Resource Header */}
+                    <div className="flex items-start space-x-3">
+                      <div className="flex-shrink-0">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                          resource.category === 'notes' 
+                            ? 'bg-blue-100 text-blue-600'
+                            : resource.category === 'pyqs'
+                            ? 'bg-green-100 text-green-600'
+                            : 'bg-purple-100 text-purple-600'
+                        }`}>
+                          {resource.category === 'notes' && (
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                          )}
+                          {resource.category === 'pyqs' && (
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                          )}
+                          {resource.category === 'projects' && (
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-lg font-medium text-gray-900 truncate">
                           {resource.title}
                         </h3>
-                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${getCategoryColor(resource.category)}`}>
-                          {resource.category === 'pyqs' ? 'PYQs' : resource.category}
-                        </span>
+                        <p className="mt-1 text-sm text-gray-500 line-clamp-2">
+                          {resource.description}
+                        </p>
+                        <div className="mt-2 flex items-center text-xs text-gray-500">
+                          <span className="truncate">{resource.file_name}</span>
+                          <span className="mx-2">•</span>
+                          <span className="whitespace-nowrap">Added on {formatDate(resource.created_at)}</span>
+                        </div>
                       </div>
-                      <p className="mt-1 text-sm text-gray-500">
-                        {resource.description}
-                      </p>
                     </div>
-                    <div className="flex space-x-2">
+
+                    {/* Resource Actions */}
+                    <div className="flex items-center justify-end space-x-2 pt-2">
                       {isPDF(resource.file_name) && (
                         <button
                           onClick={() => handlePreview(resource)}
-                          className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                          className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                         >
+                          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
                           Preview
                         </button>
                       )}
-                      <a
-                        href={resource.file_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                      <button
+                        onClick={() => handleDownload(resource)}
+                        className="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                       >
+                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
                         Download
-                      </a>
+                      </button>
                     </div>
-                  </div>
-                  <div className="mt-4 flex items-center text-sm text-gray-500">
-                    <span>File: {resource.file_name}</span>
-                    <span className="mx-2">•</span>
-                    <span>Added on {formatDate(resource.created_at)}</span>
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            ))
+          ) : (
+            <div className="col-span-full text-center py-12">
+              <svg
+                className="mx-auto h-12 w-12 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
+              </svg>
+              <h3 className="mt-2 text-sm font-medium text-gray-900">No resources found</h3>
+              <p className="mt-1 text-sm text-gray-500">
+                {searchQuery ? 'Try adjusting your search or filters' : 'Resources will appear here once added'}
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Preview Modal */}

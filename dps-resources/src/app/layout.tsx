@@ -21,7 +21,7 @@ export default function RootLayout({
       <body className="min-h-screen bg-gray-50">
         <AuthProvider>
           <Navbar />
-          {children}
+          <main>{children}</main>
         </AuthProvider>
       </body>
     </html>

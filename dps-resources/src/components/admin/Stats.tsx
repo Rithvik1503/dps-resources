@@ -156,7 +156,7 @@ export default function Stats() {
                 <dl>
                   <dt className="text-sm font-medium text-gray-500 truncate">Most Active Grade</dt>
                   <dd className="text-3xl font-semibold text-gray-900">
-                    {Object.entries(stats.resourcesByGrade).reduce((a, b) => a[1] > b[1] ? a : b)[0]}
+                    {Object.entries(stats.resourcesByGrade).reduce((a, b) => a[1] > b[1] ? a : b, ['0', 0])[0]}
                   </dd>
                 </dl>
               </div>
@@ -176,7 +176,7 @@ export default function Stats() {
                 <dl>
                   <dt className="text-sm font-medium text-gray-500 truncate">Most Common Category</dt>
                   <dd className="text-3xl font-semibold text-gray-900 capitalize">
-                    {Object.entries(stats.resourcesByCategory).reduce((a, b) => a[1] > b[1] ? a : b)[0]}
+                    {Object.entries(stats.resourcesByCategory).reduce((a, b) => a[1] > b[1] ? a : b, ['none', 0])[0]}
                   </dd>
                 </dl>
               </div>
